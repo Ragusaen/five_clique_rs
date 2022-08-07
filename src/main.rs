@@ -2,10 +2,9 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Write},
     sync:: mpsc::channel,
-    time::Instant, cmp::min,
+    time::Instant, cmp::min, collections::HashSet,
 };
 
-use rustc_hash::FxHashSet;
 
 use rayon::prelude::*;
 
@@ -76,8 +75,7 @@ struct Graph(Vec<Node>);
 impl Graph {
     fn import(filename: &str) -> Self {
         fn no_duplicate_characters(s: &str) -> bool {
-            let mut q = FxHashSet::default();
-            q.reserve(5);
+            let mut q = HashSet::with_capacity(5);
 
             for i in s.chars() {
                 q.insert(i);
@@ -113,34 +111,42 @@ impl Graph {
     }
 
     fn search_graph(&self) -> Vec<Solution> {
+
         let (send, recv) = channel();
 
         let nodes = &self.0;
 
-        nodes.par_iter().for_each_with(send,|s,i| {
+
+
+        nodes.par_iter().for_each_with(
+            // preinitialize vectors to avoid extra allocations
+            (send,  Vec::<u16>::with_capacity(4096),  Vec::<u16>::with_capacity(4096),  Vec::<u16>::with_capacity(4096)) ,
+        |(s,  thirds, fourths, fifths),i| {
+
+
             for &j in &i.neighbors {
                 let j = &nodes[j as usize];
 
-                let thirds = intersection_sorted(&i.neighbors, &j.neighbors);
+                intersection_sorted_inplace(&i.neighbors, &j.neighbors, thirds);
 
                 if thirds.len() < 3 {
                     continue;
                 }
 
-                for &k in &thirds {
-                    let k = &nodes[k as usize];
-                    let fourths = intersection_sorted(&thirds, &k.neighbors);
+                for k in thirds.iter() {
+                    let k = &nodes[*k as usize];
+                    intersection_sorted_inplace(thirds, &k.neighbors, fourths);
 
                     if fourths.len() < 2 {
                         continue;
                     }
 
-                    for &l in &fourths {
-                        let l = &nodes[l as usize];
-                        let fifths = intersection_sorted(&fourths, &l.neighbors);
+                    for l in fourths.iter() {
+                        let l = &nodes[*l as usize];
+                        intersection_sorted_inplace(fourths, &l.neighbors,  fifths);
 
-                        for m in fifths {
-                            let m = &nodes[m as usize];
+                        for m in fifths.iter() {
+                            let m = &nodes[*m as usize];
                             s.send((
                                 i.word.clone(),
                                 j.word.clone(),
@@ -158,8 +164,8 @@ impl Graph {
     }
 }
 
-fn intersection_sorted<T: PartialOrd + Clone>(a: &Vec<T>, b: &Vec<T>) -> Vec<T> {
-    let mut output = Vec::with_capacity(min(a.len(), b.len()));
+fn intersection_sorted_inplace<T: PartialOrd + Clone>(a: &Vec<T>, b: &Vec<T>, output: &mut Vec<T>) {
+    output.clear();
 
     let mut b_iter = b.iter();
 
@@ -168,7 +174,7 @@ fn intersection_sorted<T: PartialOrd + Clone>(a: &Vec<T>, b: &Vec<T>) -> Vec<T> 
             while *current_b < *current_a {
                 current_b = match b_iter.next() {
                     Some(current_b) => current_b,
-                    None => return output,
+                    None => return,
                 }
             }
 
@@ -177,5 +183,4 @@ fn intersection_sorted<T: PartialOrd + Clone>(a: &Vec<T>, b: &Vec<T>) -> Vec<T> 
             }
         }
     }
-    output
 }
