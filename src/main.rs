@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Write},
     sync:: mpsc::channel,
-    time::Instant, cmp::min, collections::HashSet,
+    time::Instant, cmp::min, collections::{HashSet, HashMap},
 };
 
 
@@ -101,6 +101,14 @@ impl Graph {
     }
 
     fn construct_graph(&mut self) {
+        // Sort words by frequency of character usage. The idea here is that if a word uses many frequently used characters, it is a worse contester, since this leaves fewer of them for the rest of the words
+        // We want to consider the worst words first, because these have fewer neighbours and therefore we need to consider less combinations over all. I.e. if badword was last, then it would be checked in all other words as well, when it could be excluded early
+        let char_frequency: HashMap<char, i32> = HashMap::from([
+            ('a', 82), ('b', 15), ('c', 28), ('d', 43), ('e', 130), ('f', 22), ('g', 20), ('h', 61), ('i', 70), ('j', 2), ('k', 8), ('l', 40), ('m', 24), ('n', 67), ('o', 75), ('p', 19), ('q', 1), ('r', 60), ('s', 63), ('t', 91), ('u', 28), ('v', 10), ('w', 24), ('x', 2), ('y', 20), ('z', 1)
+        ]);
+
+        self.0.sort_by_cached_key(|n| -n.word.chars().map(|c| char_frequency[&c]).sum::<i32>());
+
         for i in 0..self.0.len() {
             for j in i..self.0.len() {
                 if self.0[i].is_neighbors_with(&self.0[j]) {
@@ -115,8 +123,6 @@ impl Graph {
         let (send, recv) = channel();
 
         let nodes = &self.0;
-
-
 
         nodes.par_iter().for_each_with(
             // preinitialize vectors to avoid extra allocations
