@@ -1,8 +1,8 @@
 use std::{
     fs::File,
     io::{BufRead, BufReader, Write},
-    sync::Mutex,
-    time::Instant,
+    sync:: mpsc::channel,
+    time::Instant, cmp::min,
 };
 
 use rustc_hash::FxHashSet;
@@ -16,6 +16,8 @@ fn main() {
     println!("importing words");
     let mut words = Graph::import("words_alpha.txt");
     println!("Importing words took {:.2?}", start.elapsed());
+
+    println!("{}", words.0.len());
 
     let construction_start = Instant::now();
     println!("constructing graph");
@@ -53,14 +55,14 @@ fn main() {
 
 struct Node {
     word: String,
-    neighbors: FxHashSet<u16>,
+    neighbors: Vec<u16>,
 }
 
 impl Node {
     fn new(s: String) -> Self {
         Self {
             word: s,
-            neighbors: FxHashSet::default(),
+            neighbors: Vec::with_capacity(4096),
         }
     }
 
@@ -104,26 +106,22 @@ impl Graph {
         for i in 0..self.0.len() {
             for j in i..self.0.len() {
                 if self.0[i].is_neighbors_with(&self.0[j]) {
-                    self.0[i].neighbors.insert(j as u16);
+                    self.0[i].neighbors.push(j as u16)
                 }
             }
         }
     }
 
-    fn search_graph(&mut self) -> Vec<Solution> {
-        let solutions: Mutex<Vec<Solution>> = Mutex::default();
+    fn search_graph(&self) -> Vec<Solution> {
+        let (send, recv) = channel();
 
         let nodes = &self.0;
 
-        nodes.par_iter().for_each(|i| {
+        nodes.par_iter().for_each_with(send,|s,i| {
             for &j in &i.neighbors {
                 let j = &nodes[j as usize];
 
-                let thirds = i
-                    .neighbors
-                    .intersection(&j.neighbors)
-                    .copied()
-                    .collect::<FxHashSet<_>>();
+                let thirds = intersection_sorted(&i.neighbors, &j.neighbors);
 
                 if thirds.len() < 3 {
                     continue;
@@ -131,10 +129,7 @@ impl Graph {
 
                 for &k in &thirds {
                     let k = &nodes[k as usize];
-                    let fourths = thirds
-                        .intersection(&k.neighbors)
-                        .copied()
-                        .collect::<FxHashSet<_>>();
+                    let fourths = intersection_sorted(&thirds, &k.neighbors);
 
                     if fourths.len() < 2 {
                         continue;
@@ -142,26 +137,45 @@ impl Graph {
 
                     for &l in &fourths {
                         let l = &nodes[l as usize];
-                        let fifths = fourths
-                            .intersection(&l.neighbors)
-                            .copied()
-                            .collect::<Vec<_>>();
+                        let fifths = intersection_sorted(&fourths, &l.neighbors);
 
                         for m in fifths {
                             let m = &nodes[m as usize];
-                            solutions.lock().unwrap().push((
+                            s.send((
                                 i.word.clone(),
                                 j.word.clone(),
                                 k.word.clone(),
                                 l.word.clone(),
                                 m.word.clone(),
-                            ));
+                            )).unwrap();
                         }
                     }
                 }
             }
         });
 
-        solutions.into_inner().unwrap()
+        recv.into_iter().collect()
     }
+}
+
+fn intersection_sorted<T: PartialOrd + Clone>(a: &Vec<T>, b: &Vec<T>) -> Vec<T> {
+    let mut output = Vec::with_capacity(min(a.len(), b.len()));
+
+    let mut b_iter = b.iter();
+
+    if let Some(mut current_b) = b_iter.next() {
+        for current_a in a {
+            while *current_b < *current_a {
+                current_b = match b_iter.next() {
+                    Some(current_b) => current_b,
+                    None => return output,
+                }
+            }
+
+            if *current_a == *current_b {
+                output.push(current_a.clone())
+            }
+        }
+    }
+    output
 }
